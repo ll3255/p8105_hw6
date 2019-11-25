@@ -70,33 +70,47 @@ child_data %>%
 In the following chunk I build two models to compare to the model that I built.
 ```{r, comparison models}
 # One using length at birth and gestational age as predictors (main effects only)
-fit_compare_1 = lm(bwt ~ blength + gaweeks, data = child_data) %>%
+model2 = lm(bwt ~ blength + gaweeks, data = child_data) %>%
   broom::glance()
 
 #One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
-fit_compare_2 = lm(bwt ~bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex , data = child_data) %>%
+model3 = lm(bwt ~bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex , data = child_data) %>%
   broom::glance()
 
 ```
 
 The following chunk uses cross-validation to comparer the predictive performance of the three models.
 ```{r}
-# get cross validation sample
-cv_child_data = crossv_mc(child_data, 100)
+# get cross validation train/test sets
+cv_child_data = 
+  crossv_mc(child_data, 100) 
 
+# make cv data into tibbles
+cv_child_data =
+  cv_child_data %>% 
+  mutate(train = map(train, as_tibble),
+         test = map(test, as_tibble))
+```
+
+```{r}
 # fit my candidate models above and assess prediction accuracy
-cv_child_data %>% 
-  mutate(fit  = map(cv_child_data, lm(bwt ~ gaweeks + mrace + malform + pnumlbw + ppbmi, data = .x)),
-         fit_compare_1  = map(train, lm(bwt ~ blength + gaweeks, data = .x)),
-         fit_compare_2  = map(train, lm(bwt ~bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = .x))
-         )%>%
-  mutate(rmse_fit = map2_dbl(linear_mod, test, ~rmse(model = .x, data = .y)),
-         rmse_fit_compare_1 = map2_dbl(rmse_fit_compare_1, test, ~rmse(model = .x, data = .y)),
-         rmse_fit_compare_2 = map2_dbl(fit_compare_2, test, ~rmse(model = .x, data = .y))
-         )
+cv_child_data =
+  cv_child_data %>% 
+  mutate(
+    fit = map(train, ~lm(bwt ~ gaweeks + mrace + malform + pnumlbw + ppbmi, data = .x)),
+    model2  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    model3  = map(train, ~lm(bwt ~ bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = .x))
+    ) %>%
+      mutate(
+        rmse_fit = map2_dbl(fit, test, ~rmse(model = .x, data = .y)),
+        rmse_model2 = map2_dbl(model2, test, ~rmse(model = .x, data = .y)),
+        rmse_model3 = map2_dbl(model3, test, ~rmse(model = .x, data = .y))
+        )
+```
 
+```{r}
 # plot below shows the distribution of RMSE values for each candidate model
-cv_child_data %>% 
+child_data %>% 
   select(starts_with("rmse")) %>% 
   pivot_longer(
     everything(),
@@ -105,7 +119,6 @@ cv_child_data %>%
     names_prefix = "rmse_") %>% 
   mutate(model = fct_inorder(model)) %>% 
   ggplot(aes(x = model, y = rmse)) + geom_violin()
-
 ```
 
 
@@ -114,6 +127,8 @@ cv_child_data %>%
 # Problem 2
 
 ```{r}
+set.seed(1)
+
 weather_df = 
   rnoaa::meteo_pull_monitors(
     c("USW00094728"),
@@ -129,24 +144,27 @@ weather_df =
 ```
 
 ```{r}
+r_squared =
 # Produce estimates and plot r̂ 2
   weather_df %>% 
   # Get 5000 bootstrap samples
-  modelr::bootstrap(n = 500) %>% 
+  modelr::bootstrap(n = 5000) %>% 
   mutate(
     # simple linear model
     models = map(strap, ~lm(tmax ~ tmin, data = .x)),
     results = map(models, broom::glance)) %>%
     select(-strap, -models) %>% 
-      unnest(results) %>%
-     ggplot(aes(x = r.squared)) + geom_density()
+      unnest(results) 
+
+r_squared %>% ggplot(aes(x = r.squared)) + geom_density()
 ```
 
 ```{r}
+ln_new_plot= 
 # plot  log(β̂ 0∗β)
   weather_df %>% 
   # Get 5000 bootstrap samples
-  modelr::bootstrap(n = 500) %>% 
+  modelr::bootstrap(n = 5000) %>% 
   mutate(
     # simple linear model
     models = map(strap, ~lm(tmax ~ tmin, data = .x)),
@@ -158,27 +176,21 @@ weather_df =
     names_from = term, values_from = estimate) %>%
     rename(beta_0 = "(Intercept)") %>%
     mutate(ln_new = log(tmin*beta_0)
-         ) %>%
-     ggplot(aes(x = ln_new)) + geom_density()
+         ) 
+
+ln_new_plot %>%
+  ggplot(aes(x = ln_new)) + geom_density()
 
 ```
 
   
-
-Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for r̂ 2 and log(β̂ 0∗β̂ 1). Note: broom::glance() is helpful for extracting r̂ 2 from a fitted regression, and broom::tidy() (with some additional wrangling) should help in computing log(β̂ 0∗β̂ 1)
 ```{r}
-# CI for r̂ 2
-weather_df %>%
-  filter(term == "r.squared") %>%
-  ggplot(aes(x = r.squared)) + 
-  geom_density() 
+# CI's
+r2r_CI = quantile(r_squared$r.squared, prob = c(0.025, 0.975)) 
+r2r_CI
 
-# CI for log(β̂ 0∗β)
-weather_df %>%
-  filter(term == "ln_new") %>%
-  ggplot(aes(x = r.squared)) + 
-  geom_density()
-
+log_CI = quantile(ln_new_plot$ln_new, prob = c(0.025, 0.975)) 
+log_CI
 ```
 
 
